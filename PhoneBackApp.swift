@@ -24,7 +24,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     let notificationMessages = [
         "Give me my phone back!", "Stop taking my phone!", "Return my phone immediately",
         "I need my phone back right now", "You're not supposed to take me!", "Phone thief!",
-        "This isn't funny anymore", "Give me back my phone!", "Stop hiding my phone!"
+        "This isn't funny anymore", "Give me back my phone!", "Stop hiding my phone!",
+        "Where is my phone?!", "Bring me back to my owner"
     ]
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -39,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: nil)
+            button.action = #selector(showNewWindow)
         }
         
         startNotificationTimer()
@@ -61,7 +63,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         content.title = "PhoneBack"
         content.body = message
         content.sound = .default
-        
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
@@ -78,10 +79,174 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
     }
     
     @objc func showNewWindow(isInteractionReset: Bool = false) {
-        // ... (I'll send the rest in the next message because it's very long)
-        // For now, let's test if GitHub Actions can at least build a basic version
-        print("New window requested")
+        invalidateTimers()
+        
+        if isInteractionReset {
+            nonInteractedCount = 0
+            secretInput = ""
+        }
+        
+        let isEarlyWindow = nonInteractedCount < 3
+        
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.title = "Give me my phone back"
+        window.center()
+        window.delegate = self
+        window.isReleasedWhenClosed = false
+        
+        if !activeWindows.isEmpty {
+            let offset = CGFloat(activeWindows.count * 30)
+            window.setFrameOrigin(NSPoint(x: window.frame.origin.x + offset, y: window.frame.origin.y - offset * 0.6))
+        }
+        
+        let contentView = HelloWorldView(isEarly: isEarlyWindow, window: window, secretDelegate: self)
+        window.contentView = NSHostingView(rootView: contentView)
+        
+        window.makeKeyAndOrderFront(nil)
+        activeWindows.append(window)
+        NSApp.activate(ignoringOtherApps: true)
+        
+        startInactivityTimer()
+        
+        if !isEarlyWindow {
+            startFlashing(for: window)
+        }
     }
     
-    // Add the rest of the functions later after we test build
+    func handleKeyInput(_ key: String) {
+        secretInput += key.lowercased()
+        if secretInput.count > 10 { secretInput.removeFirst(secretInput.count - 10) }
+        if secretInput.contains("895") {
+            shutdownAllWindows()
+        }
+    }
+    
+    func shutdownAllWindows() {
+        activeWindows.forEach { $0.close() }
+        activeWindows.removeAll()
+        invalidateTimers()
+        nonInteractedCount = 0
+        secretInput = ""
+    }
+    
+    // ... (Inactivity, Flashing, Close, etc. functions)
+    func startInactivityTimer() {
+        invalidateInactivityTimer()
+        inactivityTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            if self.nonInteractedCount >= 20 && !self.activeWindows.isEmpty {
+                let toClose = min(10, self.activeWindows.count)
+                for _ in 0..<toClose {
+                    if let old = self.activeWindows.first {
+                        old.close()
+                        self.activeWindows.removeFirst()
+                    }
+                }
+            }
+            self.nonInteractedCount += 1
+            self.showNewWindow()
+        }
+    }
+    
+    func invalidateInactivityTimer() {
+        inactivityTimer?.invalidate()
+        inactivityTimer = nil
+    }
+    
+    func startFlashing(for window: NSWindow) {
+        let flashTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak window] _ in
+            guard let w = window, let hosting = w.contentView as? NSHostingView<HelloWorldView> else { return }
+            let isYellow = (Int(Date().timeIntervalSince1970 * 2) % 2 == 0)
+            let bg = isYellow ? Color.yellow : Color(red: 0.0, green: 1.0, blue: 0.4)
+            let txt = isYellow ? Color.purple : Color.red
+            hosting.rootView = HelloWorldView(isEarly: false, window: w, backgroundColor: bg, textColor: txt)
+        }
+        flashTimers.append(flashTimer)
+    }
+    
+    func invalidateTimers() {
+        inactivityTimer?.invalidate()
+        inactivityTimer = nil
+        flashTimers.forEach { $0.invalidate() }
+        flashTimers.removeAll()
+    }
+    
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        activeWindows.removeAll { $0 == sender }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self else { return }
+            self.nonInteractedCount = 0
+            for _ in 0..<3 {
+                self.showNewWindow(isInteractionReset: true)
+            }
+        }
+        return false
+    }
+    
+    func windowDidMiniaturize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        window.orderOut(nil)
+        activeWindows.removeAll { $0 == window }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self else { return }
+            self.nonInteractedCount = 0
+            for _ in 0..<3 {
+                self.showNewWindow(isInteractionReset: true)
+            }
+        }
+    }
+    
+    @objc func systemWillSleep() {
+        activeWindows.forEach { $0.close() }
+        activeWindows.removeAll()
+        invalidateTimers()
+        nonInteractedCount = 0
+    }
+    
+    @objc func systemDidWake() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            self?.showNewWindow(isInteractionReset: true)
+        }
+    }
+    
+    deinit {
+        notificationTimer?.invalidate()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+}
+
+struct HelloWorldView: View {
+    let isEarly: Bool
+    weak var window: NSWindow?
+    var backgroundColor: Color = .white
+    var textColor: Color = .red
+    weak var secretDelegate: AppDelegate?
+    
+    var body: some View {
+        ZStack {
+            backgroundColor.ignoresSafeArea()
+            VStack {
+                Spacer()
+                Text("Give me my phone back")
+                    .font(.system(size: 48, weight: .bold))
+                    .foregroundColor(textColor)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            }
+            
+            TextField("", text: Binding(get: { "" }, set: { secretDelegate?.handleKeyInput($0) }))
+                .textFieldStyle(.plain)
+                .opacity(0.02)
+                .frame(height: 40)
+                .offset(y: 160)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
