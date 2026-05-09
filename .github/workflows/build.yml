@@ -1,1 +1,25 @@
+name: Build PhoneBack
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Build App
+        run: |
+          xcodebuild -scheme PhoneBackApp -configuration Release -archivePath ./build/PhoneBack.xcarchive archive
+          xcodebuild -exportArchive -archivePath ./build/PhoneBack.xcarchive -exportOptionsPlist ./ExportOptions.plist -exportPath ./build
+      
+      - name: Upload .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneBack-app
+          path: ./build/PhoneBack.app
